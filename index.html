@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>TRIP — recursive mirror</title>
+<meta name="description" content="Interactive art: your movement is injected into an infinitely folding, spinning, hue-cycling mirror tunnel." />
+<meta name="theme-color" content="#04050e" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;500;800&display=swap" rel="stylesheet" />
+<style>
+  :root { color-scheme: dark; }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #04050e;
+    overflow: hidden;
+    font-family: Inter, ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: #eef1ff;
+  }
+  body.idle { cursor: none; }
+
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  #cam {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    width: 200px;
+    border-radius: 10px;
+    opacity: 0;
+    pointer-events: none;
+    transform: scaleX(-1);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    transition: opacity 0.25s ease;
+  }
+  #cam.visible { opacity: 0.85; }
+
+  #title {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    padding: clamp(30px, 7vmin, 90px) 5vw clamp(18px, 3.5vmin, 46px);
+    text-align: center;
+    pointer-events: none;
+    background: linear-gradient(to top, rgba(4, 5, 14, 0.7), rgba(4, 5, 14, 0) 100%);
+  }
+  #title.hidden { display: none; }
+  #title h1 {
+    margin: 0;
+    font-size: clamp(20px, 3.4vmin, 64px);
+    font-weight: 800;
+    letter-spacing: 0.42em;
+    text-transform: uppercase;
+    color: #fff;
+    text-shadow: 0 0 clamp(10px, 2vmin, 44px) rgba(150, 190, 255, 0.5);
+  }
+  #title p {
+    margin: clamp(8px, 1.4vmin, 20px) 0 0;
+    font-size: clamp(10px, 1.2vw, 13px);
+    font-weight: 300;
+    letter-spacing: 0.16em;
+    white-space: nowrap;
+    color: rgba(220, 228, 255, 0.72);
+  }
+
+  #gate {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    gap: 14px;
+    text-align: center;
+    padding: 32px;
+    background: radial-gradient(circle at 50% 45%, rgba(50, 16, 90, 0.78), rgba(4, 5, 14, 0.97));
+    backdrop-filter: blur(6px);
+    z-index: 5;
+  }
+  #gate.hidden { display: none; }
+  #gate h1 { margin: 0; font-size: clamp(28px, 6vw, 64px); letter-spacing: 0.32em; font-weight: 300; }
+  #gate p { margin: 0; max-width: 46ch; line-height: 1.6; opacity: 0.75; font-size: clamp(13px, 1.6vw, 18px); }
+  #gate small { opacity: 0.45; letter-spacing: 0.12em; text-transform: uppercase; font-size: 11px; }
+
+  #hud {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 6;
+    width: 250px;
+    padding: 14px 16px 16px;
+    border-radius: 14px;
+    background: rgba(8, 10, 22, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    backdrop-filter: blur(10px);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+  }
+  #hud.hidden { display: none; }
+  #hud h2 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    opacity: 0.6;
+    font-weight: 500;
+  }
+  #hud label {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 4px 8px;
+    margin-bottom: 9px;
+    opacity: 0.85;
+  }
+  #hud label span { font-variant-numeric: tabular-nums; opacity: 0.6; }
+  #hud input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: #b98cff; height: 16px; }
+  #status, #keys { opacity: 0.5; line-height: 1.6; margin-top: 10px; }
+  #keys b { font-weight: 600; color: #c9a8ff; }
+  #reset {
+    margin-top: 6px;
+    width: 100%;
+    padding: 6px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.06);
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  #reset:hover { background: rgba(255, 255, 255, 0.12); }
+</style>
+</head>
+<body class="idle">
+  <canvas id="stage"></canvas>
+  <video id="cam" playsinline muted autoplay></video>
+
+  <header id="title">
+    <h1>Trip</h1>
+    <p>Move, and the mirror will not let go of you</p>
+  </header>
+
+  <div id="gate" class="hidden">
+    <h1>TRIP</h1>
+    <p id="gate-msg">Step in front of the camera. Everything you do is folded back into itself.</p>
+    <small>Click anywhere to begin</small>
+  </div>
+
+  <aside id="hud" class="hidden">
+    <h2><span id="mode-name"></span> · <span id="palette-name"></span></h2>
+    <label>Ink <span></span><input type="range" data-param="ink" min="0" max="8" step="0.05" /></label>
+    <label>Edge ink <span></span><input type="range" data-param="edgeInk" min="0" max="6" step="0.05" /></label>
+    <label>Sharpen <span></span><input type="range" data-param="sharpen" min="0" max="1.2" step="0.02" /></label>
+    <label>Reactivity <span></span><input type="range" data-param="reactivity" min="0" max="3" step="0.05" /></label>
+    <label>Bloom <span></span><input type="range" data-param="bloom" min="0" max="2.5" step="0.05" /></label>
+    <label>Exposure <span></span><input type="range" data-param="exposure" min="0.2" max="3" step="0.05" /></label>
+    <label>Saturation <span></span><input type="range" data-param="saturation" min="0" max="2.5" step="0.05" /></label>
+    <label>Contrast <span></span><input type="range" data-param="contrast" min="0.5" max="2.5" step="0.05" /></label>
+    <label>Prism <span></span><input type="range" data-param="postChroma" min="0" max="3" step="0.05" /></label>
+    <label>Grain <span></span><input type="range" data-param="grain" min="0" max="0.12" step="0.002" /></label>
+    <label>Base glow <span></span><input type="range" data-param="glowBase" min="0" max="4" step="0.05" /></label>
+    <button id="reset" type="button">Reset</button>
+    <div id="status"></div>
+    <div id="keys"><b>H</b> panel · <b>M</b> mode · <b>P</b> palette · <b>A</b> auto-cycle · <b>T</b> title · <b>F</b> fullscreen · <b>C</b> camera · <b>R</b> reconnect</div>
+  </aside>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.169.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.169.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
