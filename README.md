@@ -22,8 +22,9 @@ of you, several thousand generations deep, and by the time you recognise a gestu
 yours it has already become a petal, then a ring, then weather.
 
 Stand still and it eats itself: with nothing new arriving, the loop grinds its own detail
-down and fades to black. It is entirely dependent on you for material. Move, and it will
-take whatever you give it and refuse, for a long time, to give it back.
+down and fades to black. An empty room gets an empty wall — the mirrors stop turning and
+wait. It is entirely dependent on you for material. Move, and it will take whatever you
+give it and refuse, for a long time, to give it back.
 
 *Tejj, 2026*
 
@@ -52,7 +53,11 @@ Everything runs in the browser, in real time, on the GPU.
    carries an unsharp term and a black floor, and iterates at a fixed 60 Hz regardless of
    display refresh rate. Without these the image degrades into a low-frequency wash within
    seconds.
-6. **Finishing** — bloom, then saturation, gamma contrast, radial chromatic aberration and
+6. **Waiting** — with nobody in front of it the transform collapses to the identity: no
+   rotation, no zoom, no warp, no ink. The screen holds still and clears to black. A
+   presence gate opens fast when someone arrives and releases slowly when they leave, so
+   the piece is calm in an empty room and only moves for people.
+7. **Finishing** — bloom, then saturation, gamma contrast, radial chromatic aberration and
    luminance-weighted grain.
 
 No build step, no dependencies to install, no server. Three.js is loaded from a CDN via an
@@ -98,6 +103,14 @@ The piece cycles automatically every 40 seconds, or press **M**.
 Press **H**. *Ink* is how strongly movement feeds the loop; *Edge ink* adds the subject's
 outline; *Sharpen* fights the resampling blur — too much and the image crackles. If the
 room is dark or the camera noisy and the field floods with colour, lower *Ink* first.
+
+Three controls govern how the piece wakes up:
+
+- **Stillness** — how much the tunnel keeps turning with nobody there. `0` is a completely
+  frozen screen; the default is a barely perceptible drift.
+- **Presence** — how little movement counts as a person. Raise it if the wall stays asleep
+  when someone walks past, lower it if passing traffic or a flickering light sets it off.
+- **Hold** — seconds the piece stays awake after the last movement.
 
 ## Notes for unattended running
 

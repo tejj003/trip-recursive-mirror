@@ -212,9 +212,9 @@ void main(){
     + motion * 0.2
   );
 
-  // Shaped so faint sensor noise contributes almost nothing.
+  // Fully gated on motion: a still room paints nothing at all.
   float mk = motion * motion;
-  float amount = uInk * mk + uEdgeInk * edge * (0.05 + 0.95 * mk);
+  float amount = (uInk + uEdgeInk * edge) * mk;
   vec3 ink = palette(t) * amount * (0.7 + 0.9 * uEnergy);
 
   // Ink is scaled by the decay so the feedback loop settles at a stable exposure.

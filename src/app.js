@@ -35,17 +35,19 @@ const MODES = [
 ];
 
 const DEFAULTS = {
-  ink: 5.5,
-  edgeInk: 3.0,
+  ink: 2.4,
+  edgeInk: 1.3,
   sharpen: 0.35,
-  bloom: 0.85,
-  exposure: 1.15,
+  stillness: 0.05,
+  presence: 3.5,
+  hold: 2.5,
+  bloom: 0.7,
+  exposure: 1.0,
   saturation: 1.35,
   contrast: 1.2,
   postChroma: 0.35,
   grain: 0.022,
   glowBase: 0.3,
-  reactivity: 1.0,
 };
 
 const P = { ...DEFAULTS };
@@ -326,6 +328,7 @@ setPalette(0);
 const clock = new THREE.Clock();
 const FIELD_STEP = 1 / 60;
 let stepAcc = 0;
+let drive = 0;
 let frames = 0;
 let fpsTime = 0;
 let fps = 0;
@@ -358,8 +361,12 @@ function frame() {
   pal.c.lerp(tmpVec.fromArray(cp.c), pk);
   pal.d.lerp(tmpVec.fromArray(cp.d), pk);
 
-  const react = 1 + energy * 1.6 * P.reactivity;
-
+  // Presence gate: snaps up when someone arrives, releases slowly when they leave.
+  // At drive 0 the warp is the identity transform, so the field holds still and sharp.
+  const wanted = Math.min(1, energy * P.presence);
+  const rate = wanted > drive ? 6.0 : 1 / Math.max(0.2, P.hold);
+  drive += (wanted - drive) * (1 - Math.exp(-rate * dt));
+  const gate = P.stillness + (1 - P.stillness) * drive;
   // 1. motion + edges from the camera
   const hasVideo = camState === 'live' && video.readyState >= 2;
   motionMat.uniforms.uHasVideo.value = hasVideo ? 1 : 0;
@@ -382,14 +389,18 @@ function frame() {
     fu.uMotion.value = motionRT[motionIndex].texture;
     fu.uTime.value = time;
     fu.uFold.value = live.fold;
-    fu.uRotStep.value = live.rot * react * sdt;
-    fu.uZoomStep.value = Math.exp(live.zoom * react * sdt);
-    fu.uWarpStep.value = live.warp * sdt;
-    fu.uHueStep.value = live.hue * react * sdt;
-    fu.uDecayStep.value = Math.pow(live.decay, sdt * 60);
+    fu.uRotStep.value = live.rot * gate * sdt;
+    fu.uZoomStep.value = Math.exp(live.zoom * gate * sdt);
+    fu.uWarpStep.value = live.warp * gate * sdt;
+    fu.uHueStep.value = live.hue * gate * sdt;
+    // Idle frames fade quickly, so an empty room returns to a clean, still screen.
+    fu.uDecayStep.value = Math.pow(THREE.MathUtils.lerp(0.988, live.decay, drive), sdt * 60);
     fu.uChroma.value = live.chroma;
-    fu.uInk.value = P.ink;
-    fu.uEdgeInk.value = P.edgeInk;
+    // The first motion frame has no previous frame to compare against and reads
+    // as full-screen movement, so hold the ink back until the buffer is primed.
+    const primed = time > 0.5 ? 1 : 0;
+    fu.uInk.value = P.ink * primed;
+    fu.uEdgeInk.value = P.edgeInk * primed;
     fu.uSharp.value = P.sharpen;
     fu.uEnergy.value = energy;
     fu.uPalA.value.copy(pal.a);
@@ -421,7 +432,7 @@ function frame() {
     frames = 0;
     fpsTime = time;
     if (!hud.classList.contains('hidden')) {
-      statusEl.textContent = `${fps} fps · ${width}×${height} @${dpr.toFixed(2)} · energy ${energy.toFixed(2)} · camera: ${camState}`;
+      statusEl.textContent = `${fps} fps · ${width}×${height} @${dpr.toFixed(2)} · energy ${energy.toFixed(2)} · drive ${drive.toFixed(2)} · camera: ${camState}`;
     }
   }
 }
@@ -494,4 +505,10 @@ keepAwake();
 video.addEventListener('loadedmetadata', updateCover);
 startCamera();
 
-window.TRIP = { P, MODES, setMode, setPalette, get energy() { return energy; }, get fps() { return fps; }, get camState() { return camState; } };
+window.TRIP = {
+  P, MODES, setMode, setPalette, feedbackMat, motionMat,
+  get drive() { return drive; },
+  get energy() { return energy; },
+  get fps() { return fps; },
+  get camState() { return camState; },
+};
