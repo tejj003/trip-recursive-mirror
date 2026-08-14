@@ -81,6 +81,7 @@ uniform vec2 uTexel;
 uniform vec2 uCoverScale;
 uniform float uDecay;
 uniform float uHasVideo;
+uniform float uGlobalShift;
 uniform float uTime;
 varying vec2 vUv;
 
@@ -110,7 +111,9 @@ void main(){
     (ul + 2.0 * u + ur) - (dl + 2.0 * d + dr)
   );
   float edge = clamp(length(sobel) * 0.9, 0.0, 1.0);
-  float motion = smoothstep(0.035, 0.30, abs(c - prev.r));
+  // Subtracting the frame-wide luminance shift stops webcam auto-exposure from
+  // registering as movement across the entire image.
+  float motion = smoothstep(0.030, 0.26, abs(c - prev.r - uGlobalShift));
 
   if (uHasVideo < 0.5){
     vec2 p = vUv * 3.0;
@@ -225,14 +228,30 @@ void main(){
 export const compositeFrag = /* glsl */ `
 precision highp float;
 uniform sampler2D uField;
+uniform sampler2D uMotion;
 uniform float uGlowBase;
+uniform float uBody;
 uniform float uTime;
+uniform float uAspect;
 varying vec2 vUv;
+
+${PALETTE}
 
 void main(){
   vec3 col = texture2D(uField, vUv).rgb;
   vec3 bg = mix(vec3(0.008, 0.010, 0.028), vec3(0.030, 0.008, 0.042), vUv.y) * uGlowBase;
-  gl_FragColor = vec4(col + bg, 1.0);
+
+  // Unfolded live layer, drawn straight over the feedback so the person always
+  // reads clearly no matter what the loop is doing behind them.
+  vec3 m = texture2D(uMotion, vUv).rgb;
+  float body = clamp(m.b * (0.20 + 0.80 * m.g) * 1.7 + m.g * 0.55, 0.0, 2.5);
+  vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
+  vec3 live = palette(fract(uTime * 0.06 + length(p) * 0.5 + m.g * 0.25)) * body * uBody;
+
+  // Knock the feedback back behind the figure so the outline reads against any background.
+  col *= 1.0 - 0.6 * clamp(body, 0.0, 1.0) * step(0.01, uBody);
+
+  gl_FragColor = vec4(col + bg + live, 1.0);
 }
 `;
 

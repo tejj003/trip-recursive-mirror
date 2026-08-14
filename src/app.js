@@ -35,8 +35,9 @@ const MODES = [
 ];
 
 const DEFAULTS = {
-  ink: 2.4,
-  edgeInk: 1.3,
+  ink: 1.8,
+  edgeInk: 1.0,
+  body: 1.6,
   sharpen: 0.35,
   stillness: 0.05,
   presence: 3.5,
@@ -140,19 +141,30 @@ probe.height = 24;
 const probeCtx = probe.getContext('2d', { willReadFrequently: true });
 let probePrev = null;
 let energy = 0;
+let meanLum = 0;
+let globalShift = 0;
 
 function sampleEnergy() {
   if (camState !== 'live' || video.readyState < 2) {
     energy = 0.35 + 0.25 * Math.sin(performance.now() * 0.0005);
+    globalShift = 0;
     return;
   }
   probeCtx.drawImage(video, 0, 0, 32, 24);
   const data = probeCtx.getImageData(0, 0, 32, 24).data;
+  let lum = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    lum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+  lum /= (32 * 24 * 255);
+
   if (probePrev) {
     let sum = 0;
     for (let i = 0; i < data.length; i += 4) sum += Math.abs(data[i] - probePrev[i]);
     energy += (Math.min(1, sum / (32 * 24 * 26)) - energy) * 0.35;
+    globalShift = lum - meanLum;
   }
+  meanLum = lum;
   probePrev = data;
 }
 
@@ -170,6 +182,7 @@ const motionMat = new THREE.ShaderMaterial({
     uCoverScale: { value: new THREE.Vector2(1, 1) },
     uDecay: { value: 0.9 },
     uHasVideo: { value: 0 },
+    uGlobalShift: { value: 0 },
     uTime: { value: 0 },
   },
 });
@@ -242,8 +255,12 @@ const compositeMat = new THREE.ShaderMaterial({
   depthWrite: false,
   uniforms: {
     uField: { value: null },
+    uMotion: { value: null },
     uGlowBase: { value: P.glowBase },
+    uBody: { value: P.body },
+    uAspect: { value: 1 },
     uTime: { value: 0 },
+    ...palUniforms(),
   },
 });
 const compositeScene = new THREE.Scene();
@@ -292,6 +309,7 @@ function resize() {
 
   fieldRT.forEach((rt) => rt.setSize(Math.round(width * dpr), Math.round(height * dpr)));
   feedbackMat.uniforms.uAspect.value = aspect;
+  compositeMat.uniforms.uAspect.value = aspect;
   feedbackMat.uniforms.uTexel.value.set(1 / (width * dpr), 1 / (height * dpr));
 
   updateCover();
@@ -341,7 +359,6 @@ function frame() {
   const time = clock.elapsedTime;
 
   if (++probeTick % 3 === 0) sampleEnergy();
-
   if (autoCycle && time > nextSwitch) {
     nextSwitch = time + 40;
     setMode(modeIndex + 1);
@@ -372,6 +389,7 @@ function frame() {
   motionMat.uniforms.uHasVideo.value = hasVideo ? 1 : 0;
   motionMat.uniforms.uTime.value = time;
   motionMat.uniforms.uDecay.value = Math.pow(0.88, dt * 60);
+  motionMat.uniforms.uGlobalShift.value = globalShift;
   motionMat.uniforms.uPrev.value = motionRT[motionIndex].texture;
   motionIndex = 1 - motionIndex;
   renderer.setRenderTarget(motionRT[motionIndex]);
@@ -414,8 +432,14 @@ function frame() {
 
   // 3. grade and bloom to screen
   compositeMat.uniforms.uField.value = fieldRT[fieldIndex].texture;
+  compositeMat.uniforms.uMotion.value = motionRT[motionIndex].texture;
   compositeMat.uniforms.uGlowBase.value = P.glowBase;
+  compositeMat.uniforms.uBody.value = P.body;
   compositeMat.uniforms.uTime.value = time;
+  compositeMat.uniforms.uPalA.value.copy(pal.a);
+  compositeMat.uniforms.uPalB.value.copy(pal.b);
+  compositeMat.uniforms.uPalC.value.copy(pal.c);
+  compositeMat.uniforms.uPalD.value.copy(pal.d);
   bloom.strength = P.bloom;
   grade.uniforms.uChroma.value = P.postChroma;
   grade.uniforms.uGrain.value = P.grain;
