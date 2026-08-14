@@ -38,6 +38,8 @@ const DEFAULTS = {
   ink: 1.8,
   edgeInk: 1.0,
   body: 1.6,
+  edgeGain: 2.6,
+  edgeThresh: 0.16,
   sharpen: 0.35,
   stillness: 0.05,
   presence: 3.5,
@@ -53,7 +55,7 @@ const DEFAULTS = {
 
 const P = { ...DEFAULTS };
 try {
-  Object.assign(P, JSON.parse(localStorage.getItem('trip.params') || '{}'));
+  Object.assign(P, JSON.parse(localStorage.getItem('alter.params') || '{}'));
 } catch { /* ignore corrupt storage */ }
 
 const canvas = document.getElementById('stage');
@@ -109,6 +111,7 @@ async function startCamera() {
     tex.magFilter = THREE.LinearFilter;
     tex.generateMipmaps = false;
     motionMat.uniforms.uVideo.value = tex;
+    bodyMat.uniforms.uVideo.value = tex;
     stream.getVideoTracks()[0].addEventListener('ended', () => {
       camState = 'lost';
       setTimeout(startCamera, 2000);
@@ -131,7 +134,10 @@ async function startCamera() {
 function updateCover() {
   const va = (video.videoWidth || 16) / (video.videoHeight || 9);
   const da = width / height;
-  motionMat.uniforms.uCoverScale.value.set(va > da ? da / va : 1, va > da ? 1 : va / da);
+  const sx = va > da ? da / va : 1;
+  const sy = va > da ? 1 : va / da;
+  motionMat.uniforms.uCoverScale.value.set(sx, sy);
+  bodyMat.uniforms.uCoverScale.value.set(sx, sy);
 }
 
 // Overall movement in the room, measured off a tiny 2D copy of the frame.
@@ -199,6 +205,29 @@ const rtOpts = {
 const motionRT = [new THREE.WebGLRenderTarget(1, 1, rtOpts), new THREE.WebGLRenderTarget(1, 1, rtOpts)];
 let motionIndex = 0;
 
+/* -------------------------------------------------------------- body pass */
+
+const bodyMat = new THREE.ShaderMaterial({
+  vertexShader: S.fullscreenVert,
+  fragmentShader: S.bodyFrag,
+  depthTest: false,
+  depthWrite: false,
+  blending: THREE.NoBlending,
+  uniforms: {
+    uVideo: { value: blankTex },
+    uMotion: { value: null },
+    uTexel: { value: new THREE.Vector2(1 / 1280, 1 / 720) },
+    uCoverScale: { value: new THREE.Vector2(1, 1) },
+    uEdgeGain: { value: P.edgeGain },
+    uThresh: { value: P.edgeThresh },
+    uSoft: { value: 0.18 },
+    uHasVideo: { value: 0 },
+  },
+});
+const bodyScene = new THREE.Scene();
+bodyScene.add(new THREE.Mesh(quadGeo, bodyMat));
+const bodyRT = new THREE.WebGLRenderTarget(1, 1, rtOpts);
+
 /* ---------------------------------------------------------- feedback pass */
 
 const palUniforms = () => ({
@@ -217,6 +246,7 @@ const feedbackMat = new THREE.ShaderMaterial({
   uniforms: {
     uPrev: { value: null },
     uMotion: { value: null },
+    uBodyTex: { value: null },
     uAspect: { value: 1 },
     uTime: { value: 0 },
     uFold: { value: 0 },
@@ -256,6 +286,7 @@ const compositeMat = new THREE.ShaderMaterial({
   uniforms: {
     uField: { value: null },
     uMotion: { value: null },
+    uBodyTex: { value: null },
     uGlowBase: { value: P.glowBase },
     uBody: { value: P.body },
     uAspect: { value: 1 },
@@ -308,6 +339,8 @@ function resize() {
   motionMat.uniforms.uTexel.value.set(1 / flowW, 1 / flowH);
 
   fieldRT.forEach((rt) => rt.setSize(Math.round(width * dpr), Math.round(height * dpr)));
+  bodyRT.setSize(Math.round(width * dpr), Math.round(height * dpr));
+  bodyMat.uniforms.uTexel.value.set(1 / (width * dpr), 1 / (height * dpr));
   feedbackMat.uniforms.uAspect.value = aspect;
   compositeMat.uniforms.uAspect.value = aspect;
   feedbackMat.uniforms.uTexel.value.set(1 / (width * dpr), 1 / (height * dpr));
@@ -395,6 +428,14 @@ function frame() {
   renderer.setRenderTarget(motionRT[motionIndex]);
   renderer.render(motionScene, quadCam);
 
+  // 1b. sharp outline at full resolution
+  bodyMat.uniforms.uMotion.value = motionRT[motionIndex].texture;
+  bodyMat.uniforms.uHasVideo.value = hasVideo ? 1 : 0;
+  bodyMat.uniforms.uEdgeGain.value = P.edgeGain;
+  bodyMat.uniforms.uThresh.value = P.edgeThresh;
+  renderer.setRenderTarget(bodyRT);
+  renderer.render(bodyScene, quadCam);
+
   // 2. fold, spin, zoom, hue-shift and re-ink the feedback buffer
   // Stepped at a fixed rate: every resample blurs, so a 120Hz display must not
   // iterate the loop twice as often as a 60Hz one.
@@ -405,6 +446,7 @@ function frame() {
     const fu = feedbackMat.uniforms;
     fu.uPrev.value = fieldRT[fieldIndex].texture;
     fu.uMotion.value = motionRT[motionIndex].texture;
+    fu.uBodyTex.value = bodyRT.texture;
     fu.uTime.value = time;
     fu.uFold.value = live.fold;
     fu.uRotStep.value = live.rot * gate * sdt;
@@ -433,6 +475,7 @@ function frame() {
   // 3. grade and bloom to screen
   compositeMat.uniforms.uField.value = fieldRT[fieldIndex].texture;
   compositeMat.uniforms.uMotion.value = motionRT[motionIndex].texture;
+  compositeMat.uniforms.uBodyTex.value = bodyRT.texture;
   compositeMat.uniforms.uGlowBase.value = P.glowBase;
   compositeMat.uniforms.uBody.value = P.body;
   compositeMat.uniforms.uTime.value = time;
@@ -474,7 +517,7 @@ sliders.forEach((el) => {
   el.addEventListener('input', () => {
     P[key] = parseFloat(el.value);
     paint();
-    try { localStorage.setItem('trip.params', JSON.stringify(P)); } catch { /* ignore */ }
+    try { localStorage.setItem('alter.params', JSON.stringify(P)); } catch { /* ignore */ }
   });
 });
 
@@ -492,7 +535,10 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'm') { setMode(modeIndex + 1); nextSwitch = clock.elapsedTime + 40; }
   else if (k === 'p') setPalette(paletteIndex + 1);
   else if (k === 'a') autoCycle = !autoCycle;
-  else if (k === 't') document.getElementById('title').classList.toggle('hidden');
+  else if (k === 't') {
+    document.getElementById('title').classList.toggle('hidden');
+    document.getElementById('signature').classList.toggle('hidden');
+  }
   else if (k === 'c') video.classList.toggle('visible');
   else if (k === 'r') startCamera();
   else if (k === 'f') {

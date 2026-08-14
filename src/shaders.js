@@ -135,6 +135,7 @@ precision highp float;
 
 uniform sampler2D uPrev;
 uniform sampler2D uMotion;
+uniform sampler2D uBodyTex;
 uniform float uAspect;
 uniform float uTime;
 uniform float uFold;
@@ -205,7 +206,7 @@ void main(){
 
   vec3 m = texture2D(uMotion, fold(vUv)).rgb;
   float motion = clamp(m.g, 0.0, 1.0);
-  float edge = clamp(m.b, 0.0, 1.0);
+  float edge = clamp(texture2D(uBodyTex, fold(vUv)).r, 0.0, 1.0);
 
   vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
   float t = fract(
@@ -217,11 +218,58 @@ void main(){
 
   // Fully gated on motion: a still room paints nothing at all.
   float mk = motion * motion;
-  float amount = (uInk + uEdgeInk * edge) * mk;
+  float amount = uInk * mk + uEdgeInk * edge;
   vec3 ink = palette(t) * amount * (0.7 + 0.9 * uEnergy);
 
   // Ink is scaled by the decay so the feedback loop settles at a stable exposure.
-  gl_FragColor = vec4(min(prev + ink * (1.0 - uDecayStep), vec3(8.0)), 1.0);
+  gl_FragColor = vec4(min(prev + ink * (1.0 - uDecayStep), vec3(3.0)), 1.0);
+}
+`;
+
+// Full-resolution outline. The motion field is deliberately low-res and smeary;
+// the figure needs its own sharp pass or it dissolves on a big screen.
+// r = outline gated by movement, g = raw edge, b = movement mask.
+export const bodyFrag = /* glsl */ `
+precision highp float;
+
+uniform sampler2D uVideo;
+uniform sampler2D uMotion;
+uniform vec2 uTexel;
+uniform vec2 uCoverScale;
+uniform float uEdgeGain;
+uniform float uThresh;
+uniform float uSoft;
+uniform float uHasVideo;
+varying vec2 vUv;
+
+float lum(vec2 uv){
+  vec2 t = (uv - 0.5) * uCoverScale + 0.5;
+  t.x = 1.0 - t.x;
+  return dot(texture2D(uVideo, clamp(t, 0.0, 1.0)).rgb, vec3(0.299, 0.587, 0.114));
+}
+
+void main(){
+  vec2 e = uTexel * 1.5;
+  float l  = lum(vUv - vec2(e.x, 0.0));
+  float r  = lum(vUv + vec2(e.x, 0.0));
+  float d  = lum(vUv - vec2(0.0, e.y));
+  float u  = lum(vUv + vec2(0.0, e.y));
+  float dl = lum(vUv - e);
+  float dr = lum(vUv + vec2(e.x, -e.y));
+  float ul = lum(vUv + vec2(-e.x, e.y));
+  float ur = lum(vUv + e);
+
+  vec2 sobel = vec2(
+    (ur + 2.0 * r + dr) - (ul + 2.0 * l + dl),
+    (ul + 2.0 * u + ur) - (dl + 2.0 * d + dr)
+  );
+  float raw = length(sobel) * uEdgeGain;
+  float outline = smoothstep(uThresh, uThresh + uSoft, raw);
+
+  float mask = smoothstep(0.06, 0.40, texture2D(uMotion, vUv).g);
+  if (uHasVideo < 0.5) mask = texture2D(uMotion, vUv).g;
+
+  gl_FragColor = vec4(outline * mask, outline, mask, 1.0);
 }
 `;
 
@@ -229,6 +277,7 @@ export const compositeFrag = /* glsl */ `
 precision highp float;
 uniform sampler2D uField;
 uniform sampler2D uMotion;
+uniform sampler2D uBodyTex;
 uniform float uGlowBase;
 uniform float uBody;
 uniform float uTime;
@@ -243,13 +292,16 @@ void main(){
 
   // Unfolded live layer, drawn straight over the feedback so the person always
   // reads clearly no matter what the loop is doing behind them.
-  vec3 m = texture2D(uMotion, vUv).rgb;
-  float body = clamp(m.b * (0.20 + 0.80 * m.g) * 1.7 + m.g * 0.55, 0.0, 2.5);
+  vec3 b = texture2D(uBodyTex, vUv).rgb;
+  float outline = b.r;
+  float glow = texture2D(uMotion, vUv).g;
+
   vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
-  vec3 live = palette(fract(uTime * 0.06 + length(p) * 0.5 + m.g * 0.25)) * body * uBody;
+  vec3 tint = palette(fract(uTime * 0.06 + length(p) * 0.45 + glow * 0.2));
+  vec3 live = (tint * 0.62 + vec3(0.38)) * outline * uBody * 2.0;
 
   // Knock the feedback back behind the figure so the outline reads against any background.
-  col *= 1.0 - 0.6 * clamp(body, 0.0, 1.0) * step(0.01, uBody);
+  col *= 1.0 - 0.72 * clamp(outline * 1.6, 0.0, 1.0) * step(0.01, uBody);
 
   gl_FragColor = vec4(col + bg + live, 1.0);
 }
